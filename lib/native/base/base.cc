@@ -94,7 +94,7 @@
 
     extern char **environ;
 #endif
-#if defined(__linux__)
+#if defined(__linux__) || defined(__ANDROID__)
     #include <sys/syscall.h>
     #include <sys/sendfile.h>
     #include <sys/eventfd.h>
@@ -2933,7 +2933,7 @@ static FileType FileModeToType(mode_t mode)
 
 static StatResult StatAt(int fd, bool fd_is_directory, const char *filename, unsigned int flags, FileInfo *out_info)
 {
-#if defined(__linux__) && defined(STATX_TYPE) && !defined(CORE_NO_STATX)
+#if defined(__linux__) || defined(__ANDROID__) && defined(STATX_TYPE) && !defined(CORE_NO_STATX)
     const char *pathname = filename;
     int stat_flags = (flags & (int)StatFlag::FollowSymlink) ? 0 : AT_SYMLINK_NOFOLLOW;
     int stat_mask = STATX_TYPE | STATX_MODE | STATX_MTIME | STATX_BTIME | STATX_SIZE;
@@ -3029,7 +3029,7 @@ static StatResult StatAt(int fd, bool fd_is_directory, const char *filename, uns
 
     out_info->type = FileModeToType(sb.st_mode);
     out_info->size = (int64_t)sb.st_size;
-#if defined(__linux__)
+#if defined(__linux__) || defined(__ANDROID__)
     out_info->mtime = (int64_t)sb.st_mtim.tv_sec * 1000 +
                       (int64_t)sb.st_mtim.tv_nsec / 1000000;
     out_info->ctime = (int64_t)sb.st_ctim.tv_sec * 1000 +
@@ -3150,7 +3150,7 @@ RenameResult RenameFile(const char *src_filename, const char *dest_filename, uns
             }
             goto sync;
         }
-#if defined(__linux__)
+#if defined(__linux__) || defined(__ANDROID__)
         if (!IsErrnoNotSupported(errno) && errno != EINVAL && errno != EPERM)
             goto error;
 #else
@@ -4721,7 +4721,7 @@ xdev:
 xdev:
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__ANDROID__)
     // Try sendfile() on Linux
     {
         bool first = true;
@@ -6009,7 +6009,7 @@ error:
 
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__ANDROID__)
 
 bool NotifySystemd()
 {
