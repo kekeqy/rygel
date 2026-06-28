@@ -710,6 +710,23 @@ async function bundleScripts(dest_dir, packages, build_dir, drop) {
             fragments.push('// SPDX-License-Identifier: MIT\n' +
                            '// SPDX-FileCopyrightText: 2026 Niels Martignène <niels.martignene@protonmail.com>');
 
+            if (format == 'esm') {
+                fragments.push('import { createRequire } from "node:module";\n' +
+                               'const require = createRequire(import.meta.url);');
+            }
+
+            fragments.push('function tryRequire(id) {\n' +
+                           '    let module = null;\n' +
+                           '    try {\n' +
+                           '        module = require(id);\n' +
+                           '    } catch (err) {\n' +
+                           '        if (err.code != "MODULE_NOT_FOUND" && err.code != "ERR_MODULE_NOT_FOUND") {\n' +
+                           '            throw err;\n' +
+                           '        }\n' +
+                           '    }\n' +
+                           '    return module;\n' +
+                           '}');
+
             fragments.push('function loadStatic(pkg) {\n' +
                            '    let native = null;');
 
@@ -717,22 +734,14 @@ async function bundleScripts(dest_dir, packages, build_dir, drop) {
                 for (let pkg of packages) {
                     for (let build of pkg.builds) {
                         fragments.push(`    if (native == null && pkg == "${pkg.target}") {\n` +
-                                       `        try {\n` +
-                                       `            native = require("../../../${build_dir}/${build.name}/koffi.node");\n` +
-                                       `        } catch (err) {\n` +
-                                       `            // Go on\n` +
-                                       `        }\n` +
+                                       `        native = tryRequire("../../../${build_dir}/${build.name}/koffi.node");\n` +
                                        `    }`);
                     }
                 }
             } else {
                 for (let pkg of packages) {
                     fragments.push(`    if (pkg == '${pkg.target}') {\n` +
-                                   `        try {\n` +
-                                   `            native = require('${pkg.name}');\n` +
-                                   `        } catch (err) {\n` +
-                                   `            // Go on\n` +
-                                   `        }\n` +
+                                   `        native = tryRequire('${pkg.name}');\n` +
                                    `    }`);
                 }
             }
