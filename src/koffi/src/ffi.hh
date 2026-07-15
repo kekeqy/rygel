@@ -141,10 +141,11 @@ struct TypeInfo {
 struct LibraryHolder {
     K_DELETE_COPY(LibraryHolder)
 
+    InstanceData *instance; // Needed to skip unmapping during teardown
     void *module = nullptr; // HMODULE on Windows
     mutable int refcount = 1;
 
-    LibraryHolder(void *module) : module(module) {}
+    LibraryHolder(InstanceData *instance, void *module) : instance(instance), module(module) {}
     ~LibraryHolder() { Unload(); }
 
     void Unload();
@@ -376,6 +377,7 @@ struct InstanceData {
 
     std::thread::id main_thread_id;
     napi_threadsafe_function broker = nullptr;
+    bool exiting = false; // Set from a process 'exit' listener before teardown
 
     CallData *sync_call = nullptr;
 

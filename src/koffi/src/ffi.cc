@@ -1843,7 +1843,7 @@ static Napi::Value LoadSharedLibrary(const Napi::CallbackInfo &info)
     }
 #endif
 
-    LibraryHolder *lib = new LibraryHolder(module);
+    LibraryHolder *lib = new LibraryHolder(instance, module);
 
     Napi::External<void> external = Napi::External<void>::New(env, lib);
     Napi::Object obj = instance->construct_lib.New({ external }).As<Napi::Object>();
@@ -2494,12 +2494,18 @@ static Napi::Value ResetKoffi(const Napi::CallbackInfo &info)
 
 void LibraryHolder::Unload()
 {
+    // During environment teardown, a detached foreign thread may still be
+    // executing inside this library. Unmapping it would crash that thread on its next
+    // instruction fetch, so leak the handle: the process is exiting and the OS reclaims
+    // everything anyway. Explicit koffi.unload() at runtime still frees normally.
+    bool tearing_down = instance->exiting;
+
 #if defined(_WIN32)
-    if (module && module != GetModuleHandle(nullptr)) {
+    if (module && module != GetModuleHandle(nullptr) && !tearing_down) {
         FreeLibrary((HMODULE)module);
     }
 #else
-    if (module && module != RTLD_DEFAULT) {
+    if (module && module != RTLD_DEFAULT && !tearing_down) {
         dlclose(module);
     }
 #endif
@@ -2658,6 +2664,16 @@ static napi_value CreateFunction(InstanceData *instance, napi_callback native, c
     NAPI_OK(napi_create_function(env, name, NAPI_AUTO_LENGTH, native, instance, &func));
 
     return func;
+}
+
+static Napi::Value MarkExiting(const Napi::CallbackInfo &info)
+{
+    Napi::Env env = info.Env();
+    InstanceData *instance = (InstanceData *)info.Data();
+
+    instance->exiting = true;
+
+    return env.Null();
 }
 
 static Napi::Object InitModule(Napi::Env env, Napi::Object exports)
@@ -2962,6 +2978,20 @@ static Napi::Object InitModule(Napi::Env env, Napi::Object exports)
 #endif
 
     instance->main_thread_id = std::this_thread::get_id();
+
+    // Mark teardown early via a process 'exit' listener. Environment cleanup hooks run
+    // after the final uv_run that can still dispatch a pending cross-thread callback
+    // relay, so they are too late to stop a JS call on a dying environment.
+    {
+        Napi::Value process = env.Global().Get("process");
+        if (process.IsObject()) {
+            Napi::Value on = process.As<Napi::Object>().Get("on");
+            if (on.IsFunction()) {
+                Napi::Function listener = Napi::Function::New(env, MarkExiting, "koffiExit", instance);
+                on.As<Napi::Function>().Call(process, { NewString(env, "exit"), listener });
+            }
+        }
+    }
 
     napi_add_env_cleanup_hook(env, [](void *udata) {
         InstanceData *instance = (InstanceData *)udata;

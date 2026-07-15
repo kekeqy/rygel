@@ -78,6 +78,7 @@ async function test() {
     const SetIndirect = lib.func('void SetIndirect(IntCallback *func)');
     const CallIndirect = lib.func('int CallIndirect(int x)');
     const CallThreaded = lib.func('int CallThreaded(IntCallback *func, int x)');
+    const StartDetachedWorker = lib.func('void StartDetachedWorker(IntCallback *cb)');
     const MakeVectors = lib.func('int MakeVectors(int len, VectorCallback *func)');
     const MakeVectorsIndirect = lib.func('void MakeVectorsIndirect(int len, VectorCallback *func, _Out_ Vec2 *out)');
     const CallQSort = lib.func('void CallQSort(_Inout_ void *base, size_t nmemb, size_t size, void *cb)');
@@ -367,5 +368,20 @@ async function test() {
         assert.equal(read, 'Hello!');
 
         handle.stop();
+    }
+
+    // Keep invoking a callback from a detached native thread while the process exits,
+    // and make sure environment teardown does not abort (see issue #271).
+    {
+        let calls = 0;
+        let cb = koffi.register(x => { calls++; return 0; }, koffi.pointer(IntCallback));
+
+        StartDetachedWorker(cb);
+        await new Promise((resolve, reject) => setTimeout(resolve, 200));
+
+        assert.ok(calls > 0);
+
+        // Deliberately leave the worker running and the callback registered: the
+        // process must still exit cleanly once this script finishes.
     }
 }

@@ -225,6 +225,67 @@ EXPORT int CallThreaded(IntCallback *func, int x)
 
 #endif
 
+// Regression test for issue #271: a detached foreign thread that keeps invoking a
+// registered callback while the process reaches environment teardown. The worker is
+// never joined or stopped, so a relay is still in flight when Node begins cleanup.
+
+static IntCallback *worker_cb;
+
+#if defined(_WIN32)
+
+static DWORD WINAPI StartDetachedWorkerFunc(void *udata)
+{
+    (void)udata;
+
+    for (int i = 0;; i++) {
+        worker_cb(i);
+        Sleep(1); // ~1 kHz
+    }
+
+    return 0;
+}
+
+EXPORT void StartDetachedWorker(IntCallback *func)
+{
+    worker_cb = func;
+
+    HANDLE h = CreateThread(NULL, 0, StartDetachedWorkerFunc, NULL, 0, NULL);
+    if (!h) {
+        perror("CreateThread");
+        exit(1);
+    }
+    CloseHandle(h); // Detach
+}
+
+#else
+
+static void *StartDetachedWorkerFunc(void *udata)
+{
+    (void)udata;
+
+    for (int i = 0;; i++) {
+        worker_cb(i);
+        usleep(1000); // ~1 kHz
+    }
+
+    return NULL;
+}
+
+EXPORT void StartDetachedWorker(IntCallback *func)
+{
+    pthread_t thread;
+
+    worker_cb = func;
+
+    if (pthread_create(&thread, NULL, StartDetachedWorkerFunc, NULL)) {
+        perror("pthread_create");
+        exit(1);
+    }
+    pthread_detach(thread);
+}
+
+#endif
+
 EXPORT int MakeVectors(int len, VectorCallback *func)
 {
     Vec2 vectors[512];

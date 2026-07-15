@@ -1679,13 +1679,19 @@ napi_value CallPointer(Napi::Env env, const FunctionInfo *proto, void *native, n
     }
 }
 
-static void PerformAsyncRelay(napi_env, napi_value, void *, void *udata)
+static void PerformAsyncRelay(napi_env env, napi_value, void *, void *udata)
 {
     RelayContext *ctx = (RelayContext *)udata;
     CallData *call = ctx->call;
 
-    call->Relay(ctx->idx, ctx->sp);
-    call->Finalize();
+    // Skip the JS relay when the environment is exiting (flag set from a process 'exit'
+    // listener) or when env is null (thread-safe function being torn down). Calling into
+    // a dying environment aborts the process via napi_throw. We still unblock the waiting
+    // foreign thread below.
+    if (env && !call->instance->exiting) [[likely]] {
+        call->Relay(ctx->idx, ctx->sp);
+        call->Finalize();
+    }
 
     // We're done!
     std::lock_guard<std::mutex> lock(ctx->mutex);
@@ -1859,6 +1865,14 @@ extern "C" void RelayCallback(Size idx, uint8_t *sp)
 {
     TrampolineInfo *trampoline = &shared.trampolines[idx];
     InstanceData *instance = trampoline->instance;
+
+    // Teardown in progress: a detached foreign thread may still invoke this callback.
+    // Relaying it would block on the broker as it is released (NAPI_OK abort) with no one
+    // left to dispatch it, so bail out — the return value no longer matters at exit. Only
+    // foreign-thread relays are affected; main-thread callbacks (e.g. from a user 'exit'
+    // handler) still run normally, since the environment is alive until the relay below.
+    if (instance->exiting && std::this_thread::get_id() != instance->main_thread_id) [[unlikely]]
+        return;
 
     // Fast path: main thread and we are running a native call through Koffi.
     // But this means we are running on the custom Koffi stack, which could trip up
